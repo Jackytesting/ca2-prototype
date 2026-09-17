@@ -1,56 +1,45 @@
-# This file must work standing ALONE on Streamlit Cloud's server (no Colab, no Drive).
-# That's why it re-loads the data and re-trains the model itself when the app starts.
-
+# High-score exemplar app — self-contained (re-loads data + re-trains on Streamlit Cloud's fresh server).
 import pandas as pd
 import streamlit as st
 from sklearn.model_selection import train_test_split
-from sklearn.tree import DecisionTreeClassifier
-from sklearn.linear_model import LinearRegression
+from sklearn.ensemble import RandomForestClassifier
 
-# 👉 PASTE your final Task 1 + Task 3 values here as PLAIN VALUES (not Colab variables):
 DATA_URL = "https://raw.githubusercontent.com/Giskard-AI/examples/main/datasets/WA_Fn-UseC_-Telco-Customer-Churn.csv"
-TARGET = "Churn"
-TASK = "classification"
-FEATURES = ["tenure", "MonthlyCharges"]
-RANDOM_STATE = 42   # a public demo — does not need to match your own Student ID
+RANDOM_STATE = 42
 
-@st.cache_data   # avoids re-training every time someone moves a slider
+@st.cache_data
 def load_and_train():
     df = pd.read_csv(DATA_URL)
-    X_all = df[FEATURES]
-    y_all = (df[TARGET] == "Yes").astype(int) if (TASK == "classification" and df[TARGET].dtype == "object") else df[TARGET]
-    strat = y_all if TASK == "classification" else None
-    X_train, X_test, y_train, y_test = train_test_split(
-        X_all, y_all, test_size=0.2, random_state=RANDOM_STATE, stratify=strat
-    )
-    model = DecisionTreeClassifier(max_depth=4, random_state=RANDOM_STATE) if TASK == "classification" else LinearRegression()
-    model.fit(X_train, y_train)
-    return df, model
+    y = (df["Churn"] == "Yes").astype(int)
+    contract_ohe = pd.get_dummies(df["Contract"], prefix="Contract")
+    internet_ohe = pd.get_dummies(df["InternetService"], prefix="Internet")
+    X = pd.concat([df[["tenure", "MonthlyCharges"]], contract_ohe, internet_ohe], axis=1)
+    Xtr, Xte, ytr, yte = train_test_split(X, y, test_size=0.2, random_state=RANDOM_STATE, stratify=y)
+    model = RandomForestClassifier(n_estimators=200, max_depth=6, random_state=RANDOM_STATE)
+    model.fit(Xtr, ytr)
+    return df, model, list(X.columns)
 
-df, model = load_and_train()
+df, model, feature_cols = load_and_train()
 
-st.title("CA2 Prototype")
-st.write(f"Predicts **{TARGET}**. Backed by a real trained {type(model).__name__} — not a fake rule.")
+st.title("CA2 Prototype — High Score Exemplar")
+st.write("Predicts **Churn**. Backed by a real trained RandomForestClassifier (4 business features).")
+st.caption("⚠️ Remember: this model's Recall is only ~46% — it misses over half of real churners. "
+           "Higher accuracy is not automatically a 'good enough' model.")
 
-# 👉 PASTE/adapt your final Task 4 AI-Copilot Streamlit code below
-#    (it can reuse df / model / FEATURES / TASK / TARGET defined above):
-
-inputs = {}
-for col in FEATURES:
-    if df[col].dtype == "object":
-        inputs[col] = st.selectbox(col, sorted(df[col].dropna().unique().tolist()))
-    else:
-        inputs[col] = st.slider(col, float(df[col].min()), float(df[col].max()), float(df[col].mean()))
+tenure = st.slider("tenure", 0, 72, 12)
+monthly = st.slider("MonthlyCharges", 18.0, 119.0, 70.0)
+contract = st.selectbox("Contract", sorted(df["Contract"].unique().tolist()))
+internet = st.selectbox("InternetService", sorted(df["InternetService"].unique().tolist()))
 
 if st.button("Predict"):
-    row = pd.DataFrame([inputs])
+    row = pd.DataFrame([{"tenure": tenure, "MonthlyCharges": monthly}])
+    for c in feature_cols:
+        if c.startswith("Contract_"):
+            row[c] = 1 if c == f"Contract_{contract}" else 0
+        elif c.startswith("Internet_"):
+            row[c] = 1 if c == f"Internet_{internet}" else 0
+    row = row[feature_cols]
     pred = model.predict(row)[0]
-    if TASK == "classification":
-        label = "Yes" if pred == 1 else "No"
-        if hasattr(model, "predict_proba"):
-            proba = model.predict_proba(row)[0][1]
-            st.success(f"Prediction: {label}  (probability: {proba:.1%})")
-        else:
-            st.success(f"Prediction: {label}")
-    else:
-        st.success(f"Predicted {TARGET}: {pred:.2f}")
+    proba = model.predict_proba(row)[0][1]
+    label = "Yes" if pred == 1 else "No"
+    st.success(f"Prediction: {label}  (probability: {proba:.1%})")
